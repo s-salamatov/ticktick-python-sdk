@@ -1,0 +1,2782 @@
+openapi: 3.0.3
+info:
+  title: TickTick API (Reverse-Engineered)
+  description: |
+    Unofficial OpenAPI specification for the TickTick web application API,
+    reverse-engineered from the TickTick web app at https://ticktick.com/webapp.
+
+    **Disclaimer:** This is not an official API. Endpoints may change without notice.
+    Use at your own risk. This specification is not affiliated with or endorsed by TickTick.
+
+    ## Authentication
+
+    The API uses cookie-based authentication. After signing in via the `/api/v2/user/signon`
+    endpoint, a session token is returned. This token must be sent as a cookie named `t`
+    with every subsequent request.
+
+    Alternatively, you can extract the `t` cookie from an active browser session.
+
+    ## Key Concepts
+
+    - **Batch Sync**: TickTick uses a checkpoint-based sync mechanism via
+      `GET /api/v3/batch/check/{checkpoint}`. Passing `0` returns all data.
+      The response includes a new `checkPoint` value for incremental syncs.
+    - **Projects**: Called "lists" in the UI. Each task belongs to a project.
+    - **Inbox**: A special built-in project. Its ID is returned in the signon
+      and batch sync responses.
+    - **Columns/Sections**: Kanban board columns within a project.
+    - **Project Groups**: Folders that organize projects in the sidebar.
+    - **Tags**: Hierarchical via naming convention (e.g., `parent/child`).
+    - **Filters**: Saved smart lists with JSON rule definitions.
+    - **Habits**: Trackable habits with Boolean (yes/no) or Real (numeric) types.
+
+    ## Priority Values
+
+    | Value | Meaning |
+    |-------|---------|
+    | 0     | None    |
+    | 1     | Low     |
+    | 3     | Medium  |
+    | 5     | High    |
+
+    ## Task Status Values
+
+    | Value | Meaning   |
+    |-------|-----------|
+    | 0     | Open      |
+    | 2     | Completed |
+  version: 0.1.0
+  contact:
+    name: TickTick Reverse API SDK
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.ticktick.com
+    description: TickTick Production API
+
+tags:
+  - name: Authentication
+    description: Sign in, MFA verification, and session management
+  - name: Batch
+    description: Batch sync operations - the core TickTick data synchronization mechanism
+  - name: Tasks
+    description: CRUD for tasks, subtasks, completion, trash, and batch task operations
+  - name: Projects
+    description: CRUD for projects (lists), including archive and template operations
+  - name: ProjectGroups
+    description: CRUD for project groups (folders that organize projects)
+  - name: Tags
+    description: CRUD for tags, sub-tags, and tag-based task queries
+  - name: Filters
+    description: CRUD for saved filters (smart lists) with rule-based criteria
+  - name: Habits
+    description: CRUD for habits, check-ins, and habit preferences
+  - name: Columns
+    description: Kanban columns / sections within projects
+  - name: Search
+    description: Full-text cloud search across tasks, tags, lists, and filters
+  - name: User
+    description: User profile, preferences, account status, and notifications
+  - name: Calendar
+    description: Third-party calendar accounts, subscriptions, and events
+
+security:
+  - cookieAuth: []
+
+paths:
+  # ============================================================================
+  # Authentication
+  # ============================================================================
+
+  /api/v2/user/signon:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Sign in with email and password
+      description: |
+        Authenticates the user with email/password credentials. Returns a session
+        token and user metadata including the inbox project ID.
+
+        For accounts with MFA enabled, the response may indicate MFA is required.
+        Call `/api/v2/user/sign/mfa/setting` to check, then verify with
+        `/api/v2/user/sign/mfa/code/verify`.
+      security: []
+      parameters:
+        - name: wc
+          in: query
+          description: Web client flag.
+          schema:
+            type: string
+            default: "true"
+            example: "true"
+        - name: remember
+          in: query
+          description: Whether to create a persistent session.
+          schema:
+            type: string
+            default: "true"
+            enum: ["true", "false"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignonRequest'
+      responses:
+        '200':
+          description: Successful authentication.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignonResponse'
+        '401':
+          description: Invalid credentials.
+        '403':
+          description: Account locked or requires verification.
+
+  /api/v2/user/sign/mfa/setting:
+    get:
+      tags: [Authentication]
+      operationId: checkMfaSetting
+      summary: Check if MFA is required after signon
+      description: |
+        Returns the MFA configuration for the current session. Call this after
+        signon to determine if a second factor is needed.
+      responses:
+        '200':
+          description: MFA settings returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaSettingResponse'
+
+  /api/v2/user/sign/mfa/code/verify:
+    post:
+      tags: [Authentication]
+      operationId: verifyMfa
+      summary: Verify MFA code after signon
+      description: |
+        Submits the MFA code (e.g., TOTP from an authenticator app) to complete
+        the two-factor authentication flow. Returns a new token on success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: The MFA verification code.
+                  example: "123456"
+      responses:
+        '200':
+          description: MFA verified successfully. Returns new session token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignonResponse'
+        '401':
+          description: Invalid MFA code.
+
+  # ============================================================================
+  # Batch Sync
+  # ============================================================================
+
+  /api/v3/batch/check/{checkpoint}:
+    get:
+      tags: [Batch]
+      operationId: batchCheck
+      summary: Fetch all data since checkpoint (batch sync)
+      description: |
+        The primary synchronization endpoint. Returns all user data that has changed
+        since the given checkpoint timestamp.
+
+        - Pass `0` to get a full sync (all data).
+        - Pass the `checkPoint` value from a previous response for incremental/delta sync.
+
+        The response contains tasks, projects, project groups, tags, filters, and
+        ordering data.
+      parameters:
+        - name: checkpoint
+          in: path
+          required: true
+          description: |
+            Sync checkpoint timestamp. Use `0` for a full sync, or the `checkPoint`
+            value from a previous batch/check response for delta sync.
+          schema:
+            type: integer
+            format: int64
+            example: 0
+      responses:
+        '200':
+          description: Sync data returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchCheckResponse'
+
+  /api/v2/batch/task:
+    post:
+      tags: [Batch, Tasks]
+      operationId: batchTask
+      summary: Batch create, update, or delete multiple tasks
+      description: |
+        Perform batch operations on tasks. The request body can contain any
+        combination of `add`, `update`, and `delete` arrays.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchTaskRequest'
+      responses:
+        '200':
+          description: Batch operation completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTaskResponse'
+
+  /api/v2/batch/taskParent:
+    post:
+      tags: [Batch, Tasks]
+      operationId: batchTaskParent
+      summary: Set parent-child relationships between tasks
+      description: |
+        Establish nested task hierarchies by setting parent task IDs.
+        Accepts an array of parent relationship objects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/TaskParentRelation'
+              example:
+                - taskId: "abc123def456"
+                  projectId: "proj_001"
+                  parentId: "parent_task_001"
+      responses:
+        '200':
+          description: Parent relationships updated.
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ============================================================================
+  # Tasks
+  # ============================================================================
+
+  /api/v2/task/{taskId}:
+    get:
+      tags: [Tasks]
+      operationId: getTask
+      summary: Get a single task by ID
+      parameters:
+        - $ref: '#/components/parameters/taskIdPath'
+        - name: projectId
+          in: query
+          required: true
+          description: The project (list) ID the task belongs to.
+          schema:
+            type: string
+            example: "proj_001"
+      responses:
+        '200':
+          description: Task returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: Task not found.
+
+    post:
+      tags: [Tasks]
+      operationId: updateTask
+      summary: Update an existing task
+      description: |
+        Updates a task by ID. Send the full task object with modified fields.
+        The `projectId` query parameter must match the task's current project.
+      parameters:
+        - $ref: '#/components/parameters/taskIdPath'
+        - name: projectId
+          in: query
+          required: true
+          description: The project (list) ID the task belongs to.
+          schema:
+            type: string
+            example: "proj_001"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '200':
+          description: Task updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+
+    delete:
+      tags: [Tasks]
+      operationId: deleteTask
+      summary: Delete a task (move to trash)
+      parameters:
+        - $ref: '#/components/parameters/taskIdPath'
+        - name: projectId
+          in: query
+          required: true
+          description: The project (list) ID the task belongs to.
+          schema:
+            type: string
+            example: "proj_001"
+      responses:
+        '200':
+          description: Task deleted (moved to trash).
+        '404':
+          description: Task not found.
+
+  /api/v2/task:
+    post:
+      tags: [Tasks]
+      operationId: createTask
+      summary: Create a new task
+      description: |
+        Creates a new task in the specified project. The task ID should be
+        generated client-side (24-character hex string). If no `projectId` is
+        specified, the task is created in the inbox.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreateRequest'
+      responses:
+        '200':
+          description: Task created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+
+  /api/v2/project/{projectId}/completed/:
+    get:
+      tags: [Tasks]
+      operationId: getCompletedTasksByProject
+      summary: Get completed tasks for a specific project
+      parameters:
+        - $ref: '#/components/parameters/projectIdPath'
+        - name: from
+          in: query
+          description: Start date (inclusive) in "YYYY-MM-DD HH:MM:SS" format.
+          schema:
+            type: string
+            example: "2026-01-01 00:00:00"
+        - name: to
+          in: query
+          description: End date (inclusive) in "YYYY-MM-DD HH:MM:SS" format.
+          schema:
+            type: string
+            example: "2026-12-31 23:59:59"
+        - name: limit
+          in: query
+          description: Maximum number of results to return.
+          schema:
+            type: integer
+            default: 50
+            example: 50
+      responses:
+        '200':
+          description: List of completed tasks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+
+  /api/v2/project/all/completed/:
+    get:
+      tags: [Tasks]
+      operationId: getAllCompletedTasks
+      summary: Get all completed tasks across all projects
+      parameters:
+        - name: from
+          in: query
+          description: Start date (inclusive) in "YYYY-MM-DD HH:MM:SS" format.
+          schema:
+            type: string
+            example: "2026-01-01 00:00:00"
+        - name: to
+          in: query
+          description: End date (inclusive) in "YYYY-MM-DD HH:MM:SS" format.
+          schema:
+            type: string
+            example: "2026-12-31 23:59:59"
+        - name: limit
+          in: query
+          description: Maximum number of results to return.
+          schema:
+            type: integer
+            default: 50
+            example: 50
+      responses:
+        '200':
+          description: List of completed tasks from all projects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+
+  /api/v2/project/all/completedInAll/:
+    get:
+      tags: [Tasks]
+      operationId: getCompletedInAll
+      summary: Get completed tasks across all lists (broader query)
+      description: |
+        A broader variant of the completed tasks endpoint that returns
+        completed tasks across all lists. Supports a higher default limit.
+      parameters:
+        - name: from
+          in: query
+          description: Start date (inclusive) in "YYYY-MM-DD HH:MM:SS" format.
+          schema:
+            type: string
+            example: "2026-01-01 00:00:00"
+        - name: to
+          in: query
+          description: End date (inclusive) in "YYYY-MM-DD HH:MM:SS" format.
+          schema:
+            type: string
+            example: "2026-12-31 23:59:59"
+        - name: limit
+          in: query
+          description: Maximum number of results to return.
+          schema:
+            type: integer
+            default: 1200
+            example: 1200
+      responses:
+        '200':
+          description: List of completed tasks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+
+  /api/v2/project/all/trash/pagination:
+    get:
+      tags: [Tasks]
+      operationId: getTrashedTasks
+      summary: Get tasks in trash
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of trashed tasks to return.
+          schema:
+            type: integer
+            default: 50
+            example: 50
+      responses:
+        '200':
+          description: List of trashed tasks.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/Task'
+                  - type: object
+                    properties:
+                      tasks:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Task'
+
+  # ============================================================================
+  # Projects
+  # ============================================================================
+
+  /api/v2/project:
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a new project (list)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectCreateRequest'
+      responses:
+        '200':
+          description: Project created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+
+  /api/v2/project/{projectId}:
+    put:
+      tags: [Projects]
+      operationId: updateProject
+      summary: Update a project
+      parameters:
+        - $ref: '#/components/parameters/projectIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Project'
+      responses:
+        '200':
+          description: Project updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+
+    delete:
+      tags: [Projects]
+      operationId: deleteProject
+      summary: Delete a project and all its tasks
+      parameters:
+        - $ref: '#/components/parameters/projectIdPath'
+      responses:
+        '200':
+          description: Project deleted.
+
+  /api/v2/templates:
+    get:
+      tags: [Projects]
+      operationId: getTemplates
+      summary: Get available project templates
+      responses:
+        '200':
+          description: List of project templates.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Template object (structure varies).
+
+  /api/v2/projectTemplates/all:
+    get:
+      tags: [Projects]
+      operationId: getProjectTemplates
+      summary: Get user's project templates
+      parameters:
+        - name: timestamp
+          in: query
+          description: Timestamp for incremental fetching. Use 0 to get all.
+          schema:
+            type: integer
+            format: int64
+            default: 0
+            example: 0
+      responses:
+        '200':
+          description: List of user's project templates.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Project template object.
+
+  # ============================================================================
+  # Project Groups
+  # ============================================================================
+
+  /api/v2/projectGroup:
+    post:
+      tags: [ProjectGroups]
+      operationId: createProjectGroup
+      summary: Create a project group (folder)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectGroupCreateRequest'
+      responses:
+        '200':
+          description: Project group created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectGroup'
+
+  /api/v2/projectGroup/{groupId}:
+    put:
+      tags: [ProjectGroups]
+      operationId: updateProjectGroup
+      summary: Update a project group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          description: The project group ID.
+          schema:
+            type: string
+            example: "grp_001"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectGroup'
+      responses:
+        '200':
+          description: Project group updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectGroup'
+
+    delete:
+      tags: [ProjectGroups]
+      operationId: deleteProjectGroup
+      summary: Delete a project group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          description: The project group ID.
+          schema:
+            type: string
+            example: "grp_001"
+      responses:
+        '200':
+          description: Project group deleted.
+
+  # ============================================================================
+  # Tags
+  # ============================================================================
+
+  /api/v2/tag:
+    post:
+      tags: [Tags]
+      operationId: createTag
+      summary: Create a new tag
+      description: |
+        Creates a new tag. For sub-tags, use the `parent/child` naming convention
+        (e.g., `"work/urgent"`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagCreateRequest'
+      responses:
+        '200':
+          description: Tag created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+
+  /api/v2/tag/{tagName}:
+    put:
+      tags: [Tags]
+      operationId: updateTag
+      summary: Update tag properties
+      description: Update a tag's color, sort order, sort type, and other properties.
+      parameters:
+        - name: tagName
+          in: path
+          required: true
+          description: The tag name. For sub-tags, use URL-encoded `parent/child` format.
+          schema:
+            type: string
+            example: "work"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Tag'
+      responses:
+        '200':
+          description: Tag updated.
+          content:
+            application/json:
+              schema:
+                type: object
+
+    delete:
+      tags: [Tags]
+      operationId: deleteTag
+      summary: Delete a tag
+      description: Deletes the tag and removes it from all tasks.
+      parameters:
+        - name: tagName
+          in: path
+          required: true
+          description: The tag name to delete.
+          schema:
+            type: string
+            example: "old-tag"
+      responses:
+        '200':
+          description: Tag deleted.
+
+  /api/v2/tag/rename:
+    put:
+      tags: [Tags]
+      operationId: renameTag
+      summary: Rename a tag across all tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, newName]
+              properties:
+                name:
+                  type: string
+                  description: Current tag name.
+                  example: "old-name"
+                newName:
+                  type: string
+                  description: New tag name.
+                  example: "new-name"
+      responses:
+        '200':
+          description: Tag renamed across all tasks.
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v2/tag/completedTask:
+    post:
+      tags: [Tags]
+      operationId: getCompletedTasksByTag
+      summary: Get completed tasks filtered by tag names
+      description: Returns completed tasks that have any of the specified tags. Supports pagination.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  description: List of tag names to filter by.
+                  example: ["work", "urgent"]
+                limit:
+                  type: integer
+                  description: Maximum number of results per page.
+                  default: 50
+                  example: 50
+                token:
+                  type: string
+                  description: Pagination token from a previous response. Empty string for first page.
+                  default: ""
+                  example: ""
+      responses:
+        '200':
+          description: List of completed tasks matching the tag criteria.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+
+  # ============================================================================
+  # Filters
+  # ============================================================================
+
+  /api/v2/filter:
+    post:
+      tags: [Filters]
+      operationId: createFilter
+      summary: Create a saved filter (smart list)
+      description: |
+        Creates a new saved filter with a JSON rule definition. Rules define
+        the criteria for which tasks appear in the filter view.
+
+        ### Rule Structure
+
+        Rules follow this general structure:
+        ```json
+        {
+          "type": 0,
+          "and": [
+            {
+              "conditionType": 1,
+              "conditionName": "listOrGroup",
+              "or": [{"or": ["project_id_1"], "conditionName": "list"}]
+            },
+            {
+              "conditionType": 1,
+              "conditionName": "priority",
+              "or": ["5", "3"]
+            },
+            {
+              "conditionType": 1,
+              "conditionName": "tag",
+              "or": ["urgent"]
+            },
+            {
+              "conditionType": 1,
+              "conditionName": "taskType",
+              "or": ["task"]
+            }
+          ],
+          "version": 3
+        }
+        ```
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FilterCreateRequest'
+      responses:
+        '200':
+          description: Filter created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Filter'
+
+  /api/v2/filter/{filterId}:
+    put:
+      tags: [Filters]
+      operationId: updateFilter
+      summary: Update a saved filter
+      parameters:
+        - name: filterId
+          in: path
+          required: true
+          description: The filter ID.
+          schema:
+            type: string
+            example: "filter_001"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Filter'
+      responses:
+        '200':
+          description: Filter updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Filter'
+
+    delete:
+      tags: [Filters]
+      operationId: deleteFilter
+      summary: Delete a saved filter
+      parameters:
+        - name: filterId
+          in: path
+          required: true
+          description: The filter ID.
+          schema:
+            type: string
+            example: "filter_001"
+      responses:
+        '200':
+          description: Filter deleted.
+
+  # ============================================================================
+  # Habits
+  # ============================================================================
+
+  /api/v2/habits:
+    get:
+      tags: [Habits]
+      operationId: getAllHabits
+      summary: Get all habits (active and archived)
+      responses:
+        '200':
+          description: List of all habits.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Habit'
+
+    post:
+      tags: [Habits]
+      operationId: createHabit
+      summary: Create a new habit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HabitCreateRequest'
+      responses:
+        '200':
+          description: Habit created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Habit'
+
+  /api/v2/habits/{habitId}:
+    put:
+      tags: [Habits]
+      operationId: updateHabit
+      summary: Update a habit
+      description: |
+        Update habit properties. To archive a habit, set `status` to `1`.
+        To unarchive, set `status` back to `0`.
+      parameters:
+        - name: habitId
+          in: path
+          required: true
+          description: The habit ID.
+          schema:
+            type: string
+            example: "habit_001"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Habit'
+      responses:
+        '200':
+          description: Habit updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Habit'
+
+    delete:
+      tags: [Habits]
+      operationId: deleteHabit
+      summary: Delete a habit permanently
+      parameters:
+        - name: habitId
+          in: path
+          required: true
+          description: The habit ID.
+          schema:
+            type: string
+            example: "habit_001"
+      responses:
+        '200':
+          description: Habit deleted.
+
+  /api/v2/habitCheckins:
+    post:
+      tags: [Habits]
+      operationId: createHabitCheckin
+      summary: Record a habit check-in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HabitCheckinRequest'
+      responses:
+        '200':
+          description: Check-in recorded successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HabitCheckin'
+
+  /api/v2/habitCheckins/query:
+    post:
+      tags: [Habits]
+      operationId: queryHabitCheckins
+      summary: Query habit check-in records
+      description: |
+        Query check-in history for one or more habits. Can filter by habit IDs
+        and date stamp.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                habitIds:
+                  type: array
+                  items:
+                    type: string
+                  description: Filter to specific habit IDs. Omit to return all.
+                  example: ["habit_001", "habit_002"]
+                afterStamp:
+                  type: string
+                  description: Return check-ins after this date stamp (YYYYMMDD format).
+                  example: "20260101"
+      responses:
+        '200':
+          description: List of check-in records.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/HabitCheckin'
+                  - type: object
+                    properties:
+                      checkins:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/HabitCheckin'
+
+  /api/v2/habits/batch:
+    post:
+      tags: [Habits]
+      operationId: batchHabitCheckin
+      summary: Batch check-in for multiple habits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [checkins]
+              properties:
+                checkins:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/HabitCheckinRequest'
+                  description: Array of check-in objects.
+      responses:
+        '200':
+          description: Batch check-ins recorded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v2/user/preferences/habit:
+    get:
+      tags: [Habits, User]
+      operationId: getHabitPreferences
+      summary: Get habit display preferences
+      parameters:
+        - name: platform
+          in: query
+          description: Client platform identifier.
+          schema:
+            type: string
+            default: "web"
+            example: "web"
+      responses:
+        '200':
+          description: Habit preferences returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Habit display preferences (calendar/today visibility, etc).
+
+  # ============================================================================
+  # Columns / Sections
+  # ============================================================================
+
+  /api/v2/column:
+    get:
+      tags: [Columns]
+      operationId: getAllColumns
+      summary: Get all columns across all projects
+      parameters:
+        - name: from
+          in: query
+          description: Timestamp to get columns modified since. Use 0 to get all.
+          schema:
+            type: integer
+            format: int64
+            default: 0
+            example: 0
+      responses:
+        '200':
+          description: List of columns.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/Column'
+                  - type: object
+                    properties:
+                      columns:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Column'
+
+    post:
+      tags: [Columns]
+      operationId: createColumn
+      summary: Create a new column/section in a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ColumnCreateRequest'
+      responses:
+        '200':
+          description: Column created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Column'
+
+  /api/v2/column/{columnId}:
+    put:
+      tags: [Columns]
+      operationId: updateColumn
+      summary: Update a column
+      parameters:
+        - name: columnId
+          in: path
+          required: true
+          description: The column ID.
+          schema:
+            type: string
+            example: "col_001"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Column'
+      responses:
+        '200':
+          description: Column updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Column'
+
+    delete:
+      tags: [Columns]
+      operationId: deleteColumn
+      summary: Delete a column/section
+      parameters:
+        - name: columnId
+          in: path
+          required: true
+          description: The column ID.
+          schema:
+            type: string
+            example: "col_001"
+        - name: projectId
+          in: query
+          required: true
+          description: The project ID the column belongs to.
+          schema:
+            type: string
+            example: "proj_001"
+      responses:
+        '200':
+          description: Column deleted.
+
+  /api/v2/column/project/{projectId}:
+    get:
+      tags: [Columns]
+      operationId: getColumnsByProject
+      summary: Get all columns/sections for a specific project
+      parameters:
+        - $ref: '#/components/parameters/projectIdPath'
+      responses:
+        '200':
+          description: List of columns for the project.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/Column'
+                  - type: object
+                    properties:
+                      columns:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Column'
+
+  # ============================================================================
+  # Search
+  # ============================================================================
+
+  /api/v2/search/all:
+    get:
+      tags: [Search]
+      operationId: searchAll
+      summary: Full-text cloud search across all content
+      description: |
+        Searches across tasks, tags, lists, and filters. Returns matching
+        results organized by content type.
+      parameters:
+        - name: keywords
+          in: query
+          required: true
+          description: Search query string.
+          schema:
+            type: string
+            example: "meeting notes"
+      responses:
+        '200':
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+  # ============================================================================
+  # User
+  # ============================================================================
+
+  /api/v2/user/profile:
+    get:
+      tags: [User]
+      operationId: getUserProfile
+      summary: Get the current user's profile
+      responses:
+        '200':
+          description: User profile returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+
+  /api/v2/user/status:
+    get:
+      tags: [User]
+      operationId: getUserStatus
+      summary: Get user account status
+      description: Returns subscription status, account limits, and other account metadata.
+      responses:
+        '200':
+          description: Account status returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Account status including subscription info and limits.
+
+  /api/v2/user/userBindingInfo:
+    get:
+      tags: [User]
+      operationId: getUserBindingInfo
+      summary: Get account binding info (linked services)
+      responses:
+        '200':
+          description: Binding info returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Linked third-party service accounts.
+
+  /api/v2/user/preferences/settings:
+    get:
+      tags: [User]
+      operationId: getUserSettings
+      summary: Get user preferences and settings
+      parameters:
+        - name: includeWeb
+          in: query
+          description: Whether to include web-specific settings.
+          schema:
+            type: string
+            default: "true"
+            enum: ["true", "false"]
+      responses:
+        '200':
+          description: User settings returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: User preferences and display settings.
+
+    post:
+      tags: [User]
+      operationId: updateUserSettings
+      summary: Update user preferences and settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Settings key-value pairs to update.
+      responses:
+        '200':
+          description: Settings updated.
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v2/user/preferences/dailyReminder:
+    get:
+      tags: [User]
+      operationId: getDailyReminder
+      summary: Get daily reminder settings
+      responses:
+        '200':
+          description: Daily reminder settings returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Daily reminder configuration.
+
+  /api/v2/user/preferences/featurePrompt:
+    get:
+      tags: [User]
+      operationId: getFeaturePrompts
+      summary: Get feature prompt preferences
+      description: Returns onboarding and feature tip preferences.
+      responses:
+        '200':
+          description: Feature prompt preferences returned.
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v2/user/preferences/ext:
+    get:
+      tags: [User]
+      operationId: getExtPreferences
+      summary: Get extension/integration preferences
+      parameters:
+        - name: mtime
+          in: query
+          description: Modified-time filter for incremental updates.
+          schema:
+            type: integer
+            format: int64
+            default: 0
+            example: 0
+      responses:
+        '200':
+          description: Extension preferences returned.
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v2/configs/limits:
+    get:
+      tags: [User]
+      operationId: getAccountLimits
+      summary: Get account limits
+      description: Returns the maximum allowed tasks, projects, and other resource limits.
+      responses:
+        '200':
+          description: Account limits returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Resource limits (max tasks, projects, etc).
+
+  /api/v1/attachment/isUnderQuota:
+    get:
+      tags: [User]
+      operationId: checkAttachmentQuota
+      summary: Check if attachment storage quota is available
+      responses:
+        '200':
+          description: Quota status returned.
+          content:
+            application/json:
+              schema:
+                type: boolean
+                description: True if the user is under the attachment storage quota.
+
+  /api/v2/notification/unread:
+    get:
+      tags: [User]
+      operationId: getUnreadNotifications
+      summary: Get unread notifications
+      responses:
+        '200':
+          description: List of unread notifications.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Notification object.
+
+  /api/v2/user/mfa:
+    get:
+      tags: [User]
+      operationId: getMfaSettings
+      summary: Get MFA (multi-factor authentication) settings
+      responses:
+        '200':
+          description: MFA settings returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: MFA configuration for the account.
+
+  # ============================================================================
+  # Calendar
+  # ============================================================================
+
+  /api/v2/calendar/third/accounts:
+    get:
+      tags: [Calendar]
+      operationId: getCalendarAccounts
+      summary: Get linked third-party calendar accounts
+      responses:
+        '200':
+          description: List of linked calendar accounts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Third-party calendar account.
+
+  /api/v2/calendar/subscription:
+    get:
+      tags: [Calendar]
+      operationId: getCalendarSubscriptions
+      summary: Get calendar subscriptions
+      responses:
+        '200':
+          description: List of calendar subscriptions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Calendar subscription.
+
+  /api/v2/calendar/bind/events/all:
+    get:
+      tags: [Calendar]
+      operationId: getCalendarEvents
+      summary: Get all bound calendar events
+      responses:
+        '200':
+          description: List of calendar events.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Calendar event object.
+
+# ==============================================================================
+# Components
+# ==============================================================================
+
+components:
+
+  # ── Security Schemes ─────────────────────────────────────────────────────────
+
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: t
+      description: |
+        Session token cookie. Obtained from the `/api/v2/user/signon` response
+        `token` field, or extracted from an active browser session's `t` cookie
+        on the `ticktick.com` domain.
+
+  # ── Parameters ───────────────────────────────────────────────────────────────
+
+  parameters:
+    taskIdPath:
+      name: taskId
+      in: path
+      required: true
+      description: The task ID (24-character hex string).
+      schema:
+        type: string
+        example: "6a1b2c3d4e5f6a7b8c9d0e1f"
+
+    projectIdPath:
+      name: projectId
+      in: path
+      required: true
+      description: The project (list) ID.
+      schema:
+        type: string
+        example: "proj_001"
+
+  # ── Schemas ──────────────────────────────────────────────────────────────────
+
+  schemas:
+
+    # ── Authentication ─────────────────────────────────────────────────────────
+
+    SignonRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: Email address or username.
+          example: "user@example.com"
+        password:
+          type: string
+          format: password
+          description: Account password.
+          example: "your_password"
+
+    SignonResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Session authentication token. Set this as the `t` cookie.
+          example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+        userId:
+          type: string
+          description: The authenticated user's ID.
+          example: "usr_001"
+        username:
+          type: string
+          description: The authenticated username / email.
+          example: "user@example.com"
+        inboxId:
+          type: string
+          description: The user's inbox project ID.
+          example: "inbox_abc123"
+        pro:
+          type: boolean
+          description: Whether the user has a premium subscription.
+        needSubscribe:
+          type: boolean
+          description: Whether the user needs to subscribe.
+        freeTrial:
+          type: boolean
+          description: Whether the user is on a free trial.
+
+    MfaSettingResponse:
+      type: object
+      properties:
+        mfaType:
+          type: string
+          nullable: true
+          description: |
+            MFA type if enabled. Null or empty if MFA is not required.
+            Possible values include "totp".
+          example: "totp"
+
+    # ── Task ───────────────────────────────────────────────────────────────────
+
+    Task:
+      type: object
+      required: [id, projectId, title]
+      properties:
+        id:
+          type: string
+          description: Unique task identifier (24-character hex string, generated client-side).
+          example: "6a1b2c3d4e5f6a7b8c9d0e1f"
+        projectId:
+          type: string
+          description: The project (list) ID this task belongs to.
+          example: "proj_001"
+        title:
+          type: string
+          description: Task title.
+          example: "Buy groceries"
+        content:
+          type: string
+          description: Task body/notes. Supports markdown.
+          default: ""
+          example: "- Milk\n- Bread\n- Eggs"
+        desc:
+          type: string
+          description: Short description.
+          default: ""
+          example: "Weekly grocery run"
+        priority:
+          type: integer
+          description: "Priority level: 0=none, 1=low, 3=medium, 5=high."
+          default: 0
+          enum: [0, 1, 3, 5]
+          example: 3
+        status:
+          type: integer
+          description: "Task status: 0=open, 2=completed."
+          default: 0
+          enum: [0, 2]
+          example: 0
+        tags:
+          type: array
+          items:
+            type: string
+          description: List of tag names assigned to this task.
+          default: []
+          example: ["errands", "personal"]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subtask'
+          description: Subtasks / checklist items.
+          default: []
+        reminders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reminder'
+          description: Reminder objects attached to the task.
+          default: []
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Start date/time in ISO 8601 format with timezone offset.
+          example: "2026-03-01T09:00:00.000+0000"
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Due date/time in ISO 8601 format with timezone offset.
+          example: "2026-03-01T17:00:00.000+0000"
+        isAllDay:
+          type: boolean
+          description: Whether this is an all-day task/event.
+          default: false
+        isFloating:
+          type: boolean
+          description: Whether the task has a floating (timezone-independent) date.
+          default: false
+        timeZone:
+          type: string
+          description: IANA timezone string.
+          example: "America/New_York"
+        repeatFlag:
+          type: string
+          description: iCal RRULE for recurring tasks.
+          example: "RRULE:FREQ=DAILY;INTERVAL=1"
+        repeatFrom:
+          type: string
+          description: Repeat calculation base (e.g., "completedDate" or "dueDate").
+          example: "dueDate"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order value within the project.
+          default: 0
+        progress:
+          type: integer
+          description: Task progress percentage (0-100).
+          default: 0
+          minimum: 0
+          maximum: 100
+        kind:
+          type: string
+          description: "Task kind: TEXT (standard task) or NOTE."
+          default: "TEXT"
+          enum: ["TEXT", "NOTE"]
+        parentId:
+          type: string
+          description: Parent task ID for nested/child tasks.
+          example: "parent_task_001"
+        columnId:
+          type: string
+          description: Kanban column ID this task belongs to.
+          example: "col_001"
+        etag:
+          type: string
+          description: Entity tag for concurrency control.
+          example: "w5r8x2k7"
+        deleted:
+          type: integer
+          description: Deletion flag (0=active, non-zero=deleted).
+          default: 0
+        createdTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the task was created.
+          example: "2026-02-18T10:30:00.000+0000"
+        modifiedTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the task was last modified.
+          example: "2026-02-18T14:00:00.000+0000"
+        creator:
+          type: integer
+          description: Creator user identifier.
+          default: 0
+        commentCount:
+          type: integer
+          description: Number of comments on the task.
+          default: 0
+        attachments:
+          type: array
+          items:
+            type: object
+            description: Attachment object.
+          description: File attachments.
+          default: []
+        childIds:
+          type: array
+          items:
+            type: string
+          description: IDs of child/nested tasks.
+          default: []
+
+    TaskCreateRequest:
+      type: object
+      required: [id, projectId, title]
+      description: Request body for creating a new task.
+      properties:
+        id:
+          type: string
+          description: Client-generated task ID (24-character hex string).
+          example: "6a1b2c3d4e5f6a7b8c9d0e1f"
+        projectId:
+          type: string
+          description: Target project/list ID. Use the inbox ID for the default inbox.
+          example: "proj_001"
+        title:
+          type: string
+          description: Task title.
+          example: "Buy groceries"
+        content:
+          type: string
+          description: Task body/notes (markdown supported).
+          default: ""
+          example: "Get items from the store"
+        desc:
+          type: string
+          description: Short description.
+          default: ""
+        priority:
+          type: integer
+          description: "Priority: 0=none, 1=low, 3=medium, 5=high."
+          default: 0
+          enum: [0, 1, 3, 5]
+        status:
+          type: integer
+          description: "Initial status: 0=open."
+          default: 0
+          enum: [0, 2]
+        isAllDay:
+          type: boolean
+          description: Whether this is an all-day task.
+          default: false
+        kind:
+          type: string
+          description: Task kind.
+          default: "TEXT"
+          enum: ["TEXT", "NOTE"]
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order value.
+          default: 0
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubtaskCreate'
+          description: Subtasks / checklist items to create with the task.
+          default: []
+        reminders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reminder'
+          description: Reminders to attach.
+          default: []
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tag names to assign.
+          default: []
+          example: ["errands"]
+        timeZone:
+          type: string
+          description: IANA timezone string.
+          example: "America/New_York"
+        startDate:
+          type: string
+          format: date-time
+          description: Start date/time.
+          example: "2026-03-01T09:00:00.000+0000"
+        dueDate:
+          type: string
+          format: date-time
+          description: Due date/time.
+          example: "2026-03-01T17:00:00.000+0000"
+        repeatFlag:
+          type: string
+          description: iCal RRULE for recurrence.
+          example: "RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO"
+        parentId:
+          type: string
+          description: Parent task ID for nested tasks.
+        columnId:
+          type: string
+          description: Kanban column ID.
+
+    Subtask:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          type: string
+          description: Subtask identifier.
+          example: "sub_001"
+        title:
+          type: string
+          description: Subtask title.
+          example: "Buy milk"
+        status:
+          type: integer
+          description: "Subtask status: 0=open, 2=completed."
+          default: 0
+          enum: [0, 2]
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order within the parent task's checklist.
+          default: 0
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional start date.
+        isAllDay:
+          type: boolean
+          description: Whether this subtask is an all-day item.
+          default: false
+        timeZone:
+          type: string
+          description: IANA timezone string.
+        completedTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the subtask was completed.
+
+    SubtaskCreate:
+      type: object
+      required: [title]
+      description: Subtask creation payload (ID is generated if not provided).
+      properties:
+        id:
+          type: string
+          description: Optional client-generated subtask ID.
+          example: "sub_001"
+        title:
+          type: string
+          description: Subtask title.
+          example: "Buy milk"
+        status:
+          type: integer
+          description: "Initial status: 0=open."
+          default: 0
+          enum: [0, 2]
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order.
+          default: 0
+        isAllDay:
+          type: boolean
+          default: false
+
+    Reminder:
+      type: object
+      required: [id, trigger]
+      properties:
+        id:
+          type: string
+          description: Reminder identifier.
+          example: "rem_001"
+        trigger:
+          type: string
+          description: iCal TRIGGER format specifying when the reminder fires.
+          example: "TRIGGER:P0DT9H0M0S"
+
+    # ── Project ────────────────────────────────────────────────────────────────
+
+    Project:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: Unique project identifier.
+          example: "proj_001"
+        name:
+          type: string
+          description: Project display name.
+          example: "Work Tasks"
+        isOwner:
+          type: boolean
+          description: Whether the current user owns this project.
+          default: true
+        color:
+          type: string
+          nullable: true
+          description: Hex color code for the project.
+          example: "#FF5733"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order in the sidebar.
+          default: 0
+        sortType:
+          type: string
+          description: Default sort type for tasks in this project.
+          default: "sortOrder"
+          example: "sortOrder"
+        sortOption:
+          $ref: '#/components/schemas/SortOption'
+        userCount:
+          type: integer
+          description: Number of users sharing this project.
+          default: 1
+        etag:
+          type: string
+          description: Entity tag for concurrency control.
+        modifiedTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last modification timestamp.
+        inAll:
+          type: boolean
+          description: Whether tasks from this project appear in the "All" view.
+          default: true
+        showType:
+          type: integer
+          description: Display type identifier.
+          default: 0
+        muted:
+          type: boolean
+          description: Whether notifications are muted for this project.
+          default: false
+        closed:
+          type: boolean
+          nullable: true
+          description: Whether the project is archived (closed). Set to true to archive.
+        groupId:
+          type: string
+          nullable: true
+          description: Parent project group (folder) ID. Null if ungrouped.
+          example: "grp_001"
+        viewMode:
+          type: string
+          description: "Display mode: list, kanban, or timeline."
+          default: "list"
+          enum: ["list", "kanban", "timeline"]
+        kind:
+          type: string
+          description: "Project kind: TASK or NOTE."
+          default: "TASK"
+          enum: ["TASK", "NOTE"]
+        teamId:
+          type: string
+          nullable: true
+          description: Team ID for shared/team projects.
+        source:
+          type: integer
+          description: Source identifier for how the project was created.
+          default: 0
+        background:
+          type: string
+          nullable: true
+          description: Background image or theme identifier.
+
+    ProjectCreateRequest:
+      type: object
+      required: [name]
+      description: Request body for creating a new project.
+      properties:
+        name:
+          type: string
+          description: Project name.
+          example: "Work Tasks"
+        color:
+          type: string
+          description: Hex color code.
+          example: "#FF5733"
+        viewMode:
+          type: string
+          description: Display mode.
+          default: "list"
+          enum: ["list", "kanban", "timeline"]
+        kind:
+          type: string
+          description: Project kind.
+          default: "TASK"
+          enum: ["TASK", "NOTE"]
+        groupId:
+          type: string
+          description: Parent project group (folder) ID.
+          example: "grp_001"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort position in sidebar.
+          default: 0
+
+    SortOption:
+      type: object
+      description: Sorting configuration for tasks within a project, tag, or filter view.
+      properties:
+        groupBy:
+          type: string
+          description: Field to group tasks by.
+          default: "sortOrder"
+          example: "sortOrder"
+        orderBy:
+          type: string
+          description: Field to order tasks by.
+          default: "sortOrder"
+          example: "sortOrder"
+        order:
+          type: string
+          nullable: true
+          description: Sort direction (e.g., "asc" or "desc").
+          example: "asc"
+
+    # ── Project Group ──────────────────────────────────────────────────────────
+
+    ProjectGroup:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: Unique project group identifier.
+          example: "grp_001"
+        name:
+          type: string
+          description: Group display name.
+          example: "Personal"
+        showAll:
+          type: boolean
+          description: Whether to show all projects in this group when expanded.
+          default: true
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order in the sidebar.
+          default: 0
+        viewMode:
+          type: string
+          nullable: true
+          description: Default view mode for projects in this group.
+        sortType:
+          type: string
+          nullable: true
+          description: Default sort type for projects in this group.
+        etag:
+          type: string
+          description: Entity tag for concurrency control.
+
+    ProjectGroupCreateRequest:
+      type: object
+      required: [name]
+      description: Request body for creating a project group (folder).
+      properties:
+        name:
+          type: string
+          description: Group name.
+          example: "Work"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort position.
+          default: 0
+
+    # ── Tag ────────────────────────────────────────────────────────────────────
+
+    Tag:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: |
+            Tag name. Sub-tags use "parent/child" format (e.g., "work/urgent").
+          example: "work"
+        rawName:
+          type: string
+          description: Original unprocessed tag name.
+        label:
+          type: string
+          description: Display label for the tag.
+          example: "Work"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order in the tag list.
+          default: 0
+        sortType:
+          type: string
+          description: Sort type for tasks viewed under this tag.
+        color:
+          type: string
+          description: Hex color code for the tag.
+          example: "#FF0000"
+        etag:
+          type: string
+          description: Entity tag for concurrency control.
+        type:
+          type: integer
+          description: Tag type identifier.
+          default: 0
+        sortOption:
+          $ref: '#/components/schemas/SortOption'
+
+    TagCreateRequest:
+      type: object
+      required: [name]
+      description: Request body for creating a new tag.
+      properties:
+        name:
+          type: string
+          description: Tag name. For sub-tags, use "parent/child" format.
+          example: "work/urgent"
+        label:
+          type: string
+          description: Display label. Defaults to the tag name if not specified.
+          example: "Urgent"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort position.
+          default: 0
+        color:
+          type: string
+          description: Hex color code.
+          example: "#FF0000"
+        sortType:
+          type: string
+          description: Default sort type for tasks in this tag view.
+
+    # ── Filter ─────────────────────────────────────────────────────────────────
+
+    Filter:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: Unique filter identifier.
+          example: "filter_001"
+        name:
+          type: string
+          description: Filter display name.
+          example: "High Priority Tasks"
+        rule:
+          type: string
+          description: |
+            JSON string defining the filter criteria. Contains an object with
+            `type`, `and` (array of conditions), and `version` fields.
+          example: '{"type":0,"and":[{"conditionType":1,"or":["5","3"],"conditionName":"priority"},{"conditionType":1,"or":["task"],"conditionName":"taskType"}],"version":3}'
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order in the sidebar.
+          default: 0
+        sortType:
+          type: string
+          description: Default sort type for tasks in this filter view.
+        viewMode:
+          type: string
+          description: Display mode for the filter view.
+          default: "list"
+          enum: ["list", "kanban", "timeline"]
+        etag:
+          type: string
+          description: Entity tag for concurrency control.
+        createdTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Creation timestamp.
+        modifiedTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last modification timestamp.
+        sortOption:
+          $ref: '#/components/schemas/SortOption'
+
+    FilterCreateRequest:
+      type: object
+      required: [name, rule]
+      description: Request body for creating a saved filter (smart list).
+      properties:
+        name:
+          type: string
+          description: Filter display name.
+          example: "High Priority Urgent"
+        rule:
+          type: string
+          description: |
+            JSON-encoded filter rule string. See the Filter schema for the rule
+            structure documentation.
+          example: '{"type":0,"and":[{"conditionType":1,"or":["5","3"],"conditionName":"priority"},{"conditionType":1,"or":["task"],"conditionName":"taskType"}],"version":3}'
+        sortType:
+          type: string
+          description: Sort type for filtered results.
+          default: "sortOrder"
+          example: "priority"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort position in the sidebar.
+          default: 0
+        viewMode:
+          type: string
+          description: Display mode.
+          default: "list"
+          enum: ["list", "kanban", "timeline"]
+
+    # ── Habit ──────────────────────────────────────────────────────────────────
+
+    Habit:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: Unique habit identifier.
+          example: "habit_001"
+        name:
+          type: string
+          description: Habit name.
+          example: "Morning Meditation"
+        iconRes:
+          type: string
+          description: |
+            Icon resource name (e.g., "habit_daily_check_in", "habit_reading",
+            "habit_exercise", "habit_introspect").
+          example: "habit_introspect"
+        color:
+          type: string
+          description: Hex color code.
+          example: "#97E38B"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order in the habit list.
+          default: 0
+        status:
+          type: integer
+          description: "Habit status: 0=active, 1=archived, 2=deleted."
+          default: 0
+          enum: [0, 1, 2]
+        encouragement:
+          type: string
+          description: Motivational message displayed on check-in.
+          example: "Start the day mindfully"
+        totalCheckIns:
+          type: integer
+          description: Total number of check-ins recorded.
+          default: 0
+        type:
+          type: string
+          description: |
+            Habit type. "Boolean" for yes/no habits, "Real" for numeric tracking.
+          default: "Boolean"
+          enum: ["Boolean", "Real"]
+        goal:
+          type: number
+          description: Target value per check-in period (1 for Boolean habits).
+          default: 1
+          example: 1
+        step:
+          type: number
+          description: Increment step value for Real-type habits.
+          default: 1
+          example: 1
+        unit:
+          type: string
+          description: Unit of measurement for Real-type habits.
+          default: "Count"
+          example: "Count"
+        repeatRule:
+          type: string
+          description: iCal RRULE defining the habit's repeat schedule.
+          example: "RRULE:FREQ=DAILY;INTERVAL=1"
+        reminders:
+          type: array
+          items:
+            type: object
+            description: Reminder configuration object.
+          description: Reminder settings for the habit.
+          default: []
+        recordEnable:
+          type: boolean
+          description: Whether detailed record keeping is enabled.
+          default: false
+        sectionId:
+          type: string
+          description: Section ID for grouping habits. "-1" means unsectioned.
+          default: "-1"
+          example: "-1"
+        targetDays:
+          type: integer
+          description: Target streak days. 0 for unlimited/no target.
+          default: 0
+        targetStartDate:
+          type: integer
+          description: Target start date in YYYYMMDD integer format.
+          default: 0
+          example: 20260218
+        completedCycles:
+          type: integer
+          description: Number of completed goal cycles.
+          default: 0
+        createdTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Creation timestamp.
+        modifiedTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last modification timestamp.
+        archivedTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the habit was archived.
+        etag:
+          type: string
+          description: Entity tag for concurrency control.
+
+    HabitCreateRequest:
+      type: object
+      required: [name]
+      description: Request body for creating a new habit.
+      properties:
+        name:
+          type: string
+          description: Habit name.
+          example: "Morning Meditation"
+        iconRes:
+          type: string
+          description: Icon resource name.
+          default: "habit_daily_check_in"
+          example: "habit_introspect"
+        color:
+          type: string
+          description: Hex color code.
+          default: "#7BC4FA"
+          example: "#97E38B"
+        type:
+          type: string
+          description: Habit type.
+          default: "Boolean"
+          enum: ["Boolean", "Real"]
+        goal:
+          type: number
+          description: Target value per check-in.
+          default: 1
+        step:
+          type: number
+          description: Increment step for Real-type habits.
+          default: 1
+        unit:
+          type: string
+          description: Unit of measurement.
+          default: "Count"
+          example: "Count"
+        repeatRule:
+          type: string
+          description: iCal RRULE for repeat schedule.
+          default: "RRULE:FREQ=DAILY;INTERVAL=1"
+          example: "RRULE:FREQ=DAILY;INTERVAL=1"
+        encouragement:
+          type: string
+          description: Motivational message.
+          default: ""
+          example: "Keep it going!"
+        sectionId:
+          type: string
+          description: Section ID for grouping.
+          default: "-1"
+        targetDays:
+          type: integer
+          description: Target streak days (0 for unlimited).
+          default: 0
+        targetStartDate:
+          type: integer
+          description: Start date in YYYYMMDD format.
+          example: 20260218
+        reminders:
+          type: array
+          items:
+            type: object
+          description: Reminder configurations.
+          default: []
+        recordEnable:
+          type: boolean
+          description: Enable detailed record keeping.
+          default: false
+        status:
+          type: integer
+          description: "Initial status: 0=active."
+          default: 0
+
+    HabitCheckin:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Check-in record identifier.
+          example: "checkin_001"
+        habitId:
+          type: string
+          description: The habit this check-in belongs to.
+          example: "habit_001"
+        status:
+          type: integer
+          description: "Check-in status: 0=unchecked, 2=checked."
+          default: 0
+          enum: [0, 2]
+        value:
+          type: number
+          description: Recorded value (1 for Boolean habits, numeric for Real).
+          default: 0
+          example: 1
+        checkinStamp:
+          type: string
+          description: Date stamp in YYYYMMDD format.
+          example: "20260218"
+        checkinTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the check-in.
+        goal:
+          type: number
+          description: Goal value at the time of check-in.
+          default: 1
+        etag:
+          type: string
+          description: Entity tag for concurrency control.
+
+    HabitCheckinRequest:
+      type: object
+      required: [habitId, checkinStamp]
+      description: Request body for recording a habit check-in.
+      properties:
+        habitId:
+          type: string
+          description: The habit ID to check in.
+          example: "habit_001"
+        checkinStamp:
+          type: string
+          description: Date stamp in YYYYMMDD format. Defaults to today if omitted.
+          example: "20260218"
+        value:
+          type: number
+          description: Value to record (1 for Boolean, numeric for Real).
+          default: 1
+          example: 1
+        status:
+          type: integer
+          description: "Check-in status: 0=unchecked, 2=checked."
+          default: 2
+          enum: [0, 2]
+
+    # ── Column ─────────────────────────────────────────────────────────────────
+
+    Column:
+      type: object
+      required: [id, projectId, name]
+      description: Kanban column / section within a project.
+      properties:
+        id:
+          type: string
+          description: Unique column identifier.
+          example: "col_001"
+        projectId:
+          type: string
+          description: The project this column belongs to.
+          example: "proj_001"
+        name:
+          type: string
+          description: Column display name.
+          example: "In Progress"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort order within the project.
+          default: 0
+        etag:
+          type: string
+          description: Entity tag for concurrency control.
+
+    ColumnCreateRequest:
+      type: object
+      required: [projectId, name]
+      description: Request body for creating a new column/section.
+      properties:
+        projectId:
+          type: string
+          description: The project to add the column to.
+          example: "proj_001"
+        name:
+          type: string
+          description: Column display name.
+          example: "In Progress"
+        sortOrder:
+          type: integer
+          format: int64
+          description: Sort position.
+          default: 0
+
+    # ── Batch ──────────────────────────────────────────────────────────────────
+
+    BatchCheckResponse:
+      type: object
+      description: |
+        Full batch sync response containing all user data since the checkpoint.
+        This is the primary synchronization payload.
+      properties:
+        checkPoint:
+          type: integer
+          format: int64
+          description: New checkpoint value to use for the next incremental sync.
+          example: 1708300800000
+        inboxId:
+          type: string
+          description: The user's inbox project ID.
+          example: "inbox_abc123"
+        syncTaskBean:
+          type: object
+          description: Container for task sync data.
+          properties:
+            update:
+              type: array
+              items:
+                $ref: '#/components/schemas/Task'
+              description: Tasks that have been added or updated since the checkpoint.
+            delete:
+              type: array
+              items:
+                type: object
+                properties:
+                  taskId:
+                    type: string
+                  projectId:
+                    type: string
+              description: Tasks that have been deleted since the checkpoint.
+            tagUpdate:
+              type: array
+              items:
+                type: object
+              description: Tag-related task updates.
+            empty:
+              type: boolean
+              description: Whether the sync result set is empty.
+        projectProfiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+          description: All projects (lists) belonging to the user.
+        projectGroups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectGroup'
+          description: All project groups (folders).
+        filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/Filter'
+          description: All saved filters (smart lists).
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+          description: All tags.
+        syncTaskOrderBean:
+          type: object
+          description: Task ordering/positioning data for each project.
+        remindChanges:
+          type: array
+          items:
+            type: object
+          description: Pending reminder changes.
+
+    BatchTaskRequest:
+      type: object
+      description: |
+        Request body for batch task operations. Include any combination of
+        `add`, `update`, and `delete` arrays.
+      properties:
+        add:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskCreateRequest'
+          description: Tasks to create.
+        update:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+          description: Tasks to update.
+        delete:
+          type: array
+          items:
+            type: object
+            required: [taskId, projectId]
+            properties:
+              taskId:
+                type: string
+                description: Task ID to delete.
+                example: "6a1b2c3d4e5f6a7b8c9d0e1f"
+              projectId:
+                type: string
+                description: Project ID the task belongs to.
+                example: "proj_001"
+          description: Tasks to delete.
+
+    BatchTaskResponse:
+      type: object
+      description: Response from batch task operations.
+      properties:
+        id2taskId:
+          type: object
+          additionalProperties:
+            type: string
+          description: Mapping of client-generated IDs to server-assigned IDs (for created tasks).
+        id2etag:
+          type: object
+          additionalProperties:
+            type: string
+          description: Mapping of task IDs to new etag values.
+
+    TaskParentRelation:
+      type: object
+      required: [taskId, projectId, parentId]
+      description: Defines a parent-child relationship between tasks.
+      properties:
+        taskId:
+          type: string
+          description: The child task ID.
+          example: "child_task_001"
+        projectId:
+          type: string
+          description: The project ID containing both tasks.
+          example: "proj_001"
+        parentId:
+          type: string
+          description: The parent task ID.
+          example: "parent_task_001"
+
+    # ── Search ─────────────────────────────────────────────────────────────────
+
+    SearchResponse:
+      type: object
+      description: |
+        Cloud search results. May contain matched tasks, tags, projects, and filters.
+        The exact structure depends on matching content types.
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+          description: Matched tasks.
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+          description: Matched tags.
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+          description: Matched projects/lists.
+        filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/Filter'
+          description: Matched filters.
+
+    # ── User ───────────────────────────────────────────────────────────────────
+
+    UserProfile:
+      type: object
+      description: User profile information.
+      properties:
+        id:
+          type: string
+          description: User ID.
+        username:
+          type: string
+          description: Username / email.
+          example: "user@example.com"
+        name:
+          type: string
+          description: Display name.
+          example: "John Doe"
+        avatar:
+          type: string
+          nullable: true
+          description: URL to the user's avatar image.
+        pro:
+          type: boolean
+          description: Whether the user has a premium subscription.
+        freeTrial:
+          type: boolean
+          description: Whether the user is on a free trial.
+        createdDate:
+          type: string
+          format: date-time
+          description: Account creation date.
+        timeZone:
+          type: string
+          description: User's default timezone.
+          example: "America/New_York"
+        locale:
+          type: string
+          description: User's locale setting.
+          example: "en_US"

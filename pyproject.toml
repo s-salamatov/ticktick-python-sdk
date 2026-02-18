@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ticktick-sdk"
+version = "0.1.0"
+description = "Reverse-engineered Python SDK for the TickTick web app API"
+readme = "README.md"
+license = "MIT"
+authors = [
+    {name = "TickTick SDK Contributors"},
+]
+requires-python = ">=3.10"
+keywords = ["ticktick", "todo", "task-management", "api", "sdk", "productivity"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = ["requests>=2.28"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "ruff", "mypy"]
+
+[project.urls]
+Homepage = "https://github.com/s-salamatov/ticktick-python-sdk"
+Repository = "https://github.com/s-salamatov/ticktick-python-sdk"
+Issues = "https://github.com/s-salamatov/ticktick-python-sdk/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ticktick_sdk*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.mypy]
+strict = false
+python_version = "3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
