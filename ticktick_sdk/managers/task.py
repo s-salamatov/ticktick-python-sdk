@@ -32,7 +32,7 @@ class TaskManager:
 
     def get_all(self) -> list[Task]:
         """Get all tasks via batch sync (returns open tasks from all projects)."""
-        data = self._c.batch.check()
+        data = self._c.batch.full_sync()
         tasks_raw = data.get("syncTaskBean", {}).get("update", [])
         return [Task.from_dict(t) for t in tasks_raw]
 
