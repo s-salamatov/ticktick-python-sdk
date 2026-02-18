@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 
-import pytest
 
 from ticktick_sdk.models import (
     _format_dt,

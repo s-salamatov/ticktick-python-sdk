@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -64,7 +64,7 @@ class TestTaskManager:
         }
         mock_client.post.return_value = make_response(task_resp)
 
-        task = manager.create("New task", project_id="proj1")
+        manager.create("New task", project_id="proj1")
 
         mock_client.post.assert_called_once()
         call_kwargs = mock_client.post.call_args
@@ -476,7 +476,7 @@ class TestProjectManager:
     def test_create_posts_to_project_endpoint(self, manager, mock_client):
         mock_client.post.return_value = make_response({"id": "p_new", "name": "New List"})
 
-        project = manager.create("New List")
+        manager.create("New List")
 
         mock_client.post.assert_called_once()
         endpoint = mock_client.post.call_args[0][0]
