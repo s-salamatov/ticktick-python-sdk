@@ -2,7 +2,7 @@
 
 ![status: unofficial](https://img.shields.io/badge/status-unofficial-orange)
 ![python: 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
-![CI: pending](https://img.shields.io/badge/CI-pending-lightgrey)
+[![CI](https://github.com/s-salamatov/ticktick-python-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/s-salamatov/ticktick-python-sdk/actions/workflows/ci.yml)
 
 > **Disclaimer:** This is an unofficial, reverse-engineered SDK based on the TickTick web app API.
 > It is not affiliated with, endorsed by, or supported by TickTick or its parent company.
