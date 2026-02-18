@@ -26,6 +26,7 @@ from ticktick_sdk.models import (
 # _format_dt / _parse_dt
 # ---------------------------------------------------------------------------
 
+
 def test_format_dt_naive():
     """Naive datetimes are used as-is (no tz conversion)."""
     dt = datetime(2024, 3, 15, 10, 30, 0)
@@ -146,10 +147,12 @@ def test_subtask_to_dict_no_completed_time():
 
 
 def test_subtask_to_dict_includes_completed_time():
-    st = Subtask.from_dict({
-        **SUBTASK_DICT,
-        "completedTime": "2024-03-15T12:00:00.000+0000",
-    })
+    st = Subtask.from_dict(
+        {
+            **SUBTASK_DICT,
+            "completedTime": "2024-03-15T12:00:00.000+0000",
+        }
+    )
     d = st.to_dict()
     assert "completedTime" in d
     assert "2024-03-15" in d["completedTime"]
@@ -168,6 +171,7 @@ def test_subtask_round_trip():
 # ---------------------------------------------------------------------------
 # Reminder
 # ---------------------------------------------------------------------------
+
 
 def test_reminder_from_dict():
     r = Reminder.from_dict({"id": "rem1", "trigger": "TRIGGER:P0DT9H0M0S"})
@@ -209,9 +213,7 @@ TASK_DICT = {
             "isAllDay": False,
         }
     ],
-    "reminders": [
-        {"id": "rem001", "trigger": "TRIGGER:P0DT9H0M0S"}
-    ],
+    "reminders": [{"id": "rem001", "trigger": "TRIGGER:P0DT9H0M0S"}],
     "startDate": "2024-03-15T09:00:00.000+0000",
     "dueDate": "2024-03-15T18:00:00.000+0000",
     "isAllDay": False,
@@ -275,20 +277,22 @@ def test_task_from_dict_minimal():
 
 def test_task_from_dict_null_fields():
     """Null tags/items/etc in API response are normalised to empty lists."""
-    task = Task.from_dict({
-        "id": "t1",
-        "projectId": "p1",
-        "title": "Test",
-        "tags": None,
-        "items": None,
-        "reminders": None,
-        "attachments": None,
-        "childIds": None,
-        "repeatFlag": None,
-        "repeatFrom": None,
-        "parentId": None,
-        "columnId": None,
-    })
+    task = Task.from_dict(
+        {
+            "id": "t1",
+            "projectId": "p1",
+            "title": "Test",
+            "tags": None,
+            "items": None,
+            "reminders": None,
+            "attachments": None,
+            "childIds": None,
+            "repeatFlag": None,
+            "repeatFrom": None,
+            "parentId": None,
+            "columnId": None,
+        }
+    )
     assert task.tags == []
     assert task.items == []
     assert task.reminders == []
@@ -388,6 +392,7 @@ def test_task_round_trip():
 # ---------------------------------------------------------------------------
 # SortOption
 # ---------------------------------------------------------------------------
+
 
 def test_sort_option_from_dict():
     so = SortOption.from_dict({"groupBy": "priority", "orderBy": "dueDate", "order": "asc"})

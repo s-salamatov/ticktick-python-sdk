@@ -57,11 +57,14 @@ class TagManager:
             limit: Max results per page.
             token: Pagination token from previous response.
         """
-        resp = self._c.post("/api/v2/tag/completedTask", json={
-            "tags": tag_names,
-            "token": token,
-            "limit": limit,
-        })
+        resp = self._c.post(
+            "/api/v2/tag/completedTask",
+            json={
+                "tags": tag_names,
+                "token": token,
+                "limit": limit,
+            },
+        )
         return [Task.from_dict(t) for t in resp.json()]
 
     # ── Create ────────────────────────────────────────────────────────
@@ -108,10 +111,13 @@ class TagManager:
 
     def rename(self, old_name: str, new_name: str) -> dict:
         """Rename a tag across all tasks."""
-        return self._c.put("/api/v2/tag/rename", json={
-            "name": old_name,
-            "newName": new_name,
-        }).json()
+        return self._c.put(
+            "/api/v2/tag/rename",
+            json={
+                "name": old_name,
+                "newName": new_name,
+            },
+        ).json()
 
     def update(self, tag: Tag) -> dict:
         """Update tag properties (color, sort, etc)."""

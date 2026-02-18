@@ -21,6 +21,7 @@ from ticktick_sdk.exceptions import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def make_response(status_code: int, json_data=None, text: str = "", headers=None):
     """Build a mock requests.Response."""
     resp = MagicMock(spec=requests.Response)
@@ -55,16 +56,16 @@ def client(mock_session):
 # set_token
 # ---------------------------------------------------------------------------
 
+
 def test_set_token_sets_cookie(client, mock_session):
     client.set_token("mytoken123")
-    mock_session.cookies.set.assert_called_once_with(
-        "t", "mytoken123", domain="ticktick.com", path="/"
-    )
+    mock_session.cookies.set.assert_called_once_with("t", "mytoken123", domain="ticktick.com", path="/")
 
 
 # ---------------------------------------------------------------------------
 # request() – success path
 # ---------------------------------------------------------------------------
+
 
 def test_request_success(client, mock_session):
     ok_resp = make_response(200, json_data={"key": "value"})
@@ -100,6 +101,7 @@ def test_request_passes_params_and_json(client, mock_session):
 # ---------------------------------------------------------------------------
 # request() – HTTP error handling
 # ---------------------------------------------------------------------------
+
 
 def test_request_raises_auth_error_on_401(client, mock_session):
     mock_session.request.return_value = make_response(401, text="Unauthorized")
@@ -144,6 +146,7 @@ def test_request_raises_api_error_with_non_json_body(client, mock_session):
 # ---------------------------------------------------------------------------
 # request() – 429 retry logic
 # ---------------------------------------------------------------------------
+
 
 def test_request_retries_on_429_then_succeeds(client, mock_session):
     """First call returns 429, second returns 200."""
@@ -220,6 +223,7 @@ def test_rate_limit_error_retry_after_none_when_no_header(client, mock_session):
 # request() – sensitive endpoint log redaction
 # ---------------------------------------------------------------------------
 
+
 def test_sensitive_endpoint_response_is_redacted(client, mock_session):
     """Auth endpoints must not log the response body."""
     bad_resp = make_response(401, text="bad credentials")
@@ -272,12 +276,16 @@ def test_non_sensitive_endpoint_logs_response_body(client, mock_session):
 # login()
 # ---------------------------------------------------------------------------
 
+
 def test_login_sets_token_and_inbox_id(client, mock_session):
-    login_response = make_response(200, json_data={
-        "token": "auth_token_xyz",
-        "inboxId": "inbox_abc",
-        "username": "test@example.com",
-    })
+    login_response = make_response(
+        200,
+        json_data={
+            "token": "auth_token_xyz",
+            "inboxId": "inbox_abc",
+            "username": "test@example.com",
+        },
+    )
     mock_session.request.return_value = login_response
 
     result = client.login("test@example.com", "password123")
@@ -290,10 +298,13 @@ def test_login_sets_token_and_inbox_id(client, mock_session):
 
 def test_login_without_token_in_response(client, mock_session):
     """If the response has no token (e.g. MFA required), inbox_id is still set."""
-    login_response = make_response(200, json_data={
-        "inboxId": "inbox_abc",
-        "mfaRequired": True,
-    })
+    login_response = make_response(
+        200,
+        json_data={
+            "inboxId": "inbox_abc",
+            "mfaRequired": True,
+        },
+    )
     mock_session.request.return_value = login_response
 
     result = client.login("u@example.com", "pass")
@@ -319,6 +330,7 @@ def test_login_uses_signon_endpoint(client, mock_session):
 # ---------------------------------------------------------------------------
 # Convenience method wrappers
 # ---------------------------------------------------------------------------
+
 
 def test_get_delegates_to_request(client, mock_session):
     ok_resp = make_response(200, json_data={})

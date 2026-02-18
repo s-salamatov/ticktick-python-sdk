@@ -113,10 +113,13 @@ class ProjectManager:
 
     def create_group(self, name: str, *, sort_order: int = 0) -> ProjectGroup:
         """Create a project group (folder)."""
-        resp = self._c.post("/api/v2/projectGroup", json={
-            "name": name,
-            "sortOrder": sort_order,
-        })
+        resp = self._c.post(
+            "/api/v2/projectGroup",
+            json={
+                "name": name,
+                "sortOrder": sort_order,
+            },
+        )
         return ProjectGroup.from_dict(resp.json())
 
     def update_group(self, group: ProjectGroup) -> ProjectGroup:

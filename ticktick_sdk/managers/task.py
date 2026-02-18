@@ -172,13 +172,15 @@ class TaskManager:
         if items:
             for i, item in enumerate(items):
                 item_id = item.get("id", os.urandom(12).hex())
-                payload["items"].append({
-                    "id": item_id,
-                    "title": item["title"],
-                    "status": item.get("status", 0),
-                    "sortOrder": item.get("sortOrder", i * 1099511627776),
-                    "isAllDay": False,
-                })
+                payload["items"].append(
+                    {
+                        "id": item_id,
+                        "title": item["title"],
+                        "status": item.get("status", 0),
+                        "sortOrder": item.get("sortOrder", i * 1099511627776),
+                        "isAllDay": False,
+                    }
+                )
         if reminders:
             payload["reminders"] = reminders
 
@@ -228,9 +230,12 @@ class TaskManager:
 
     def delete(self, task_id: str, project_id: str) -> None:
         """Delete a task (move to trash)."""
-        self._c.post("/api/v2/batch/task", json={
-            "delete": [{"taskId": task_id, "projectId": project_id}],
-        })
+        self._c.post(
+            "/api/v2/batch/task",
+            json={
+                "delete": [{"taskId": task_id, "projectId": project_id}],
+            },
+        )
 
     def batch_delete(self, tasks: list[dict[str, str]]) -> None:
         """Delete multiple tasks.

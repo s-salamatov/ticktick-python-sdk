@@ -503,6 +503,7 @@ class HabitCheckin:
 @dataclass
 class Column:
     """Kanban column (section within a project)."""
+
     id: str
     project_id: str
     name: str

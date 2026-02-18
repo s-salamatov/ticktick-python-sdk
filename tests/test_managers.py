@@ -21,6 +21,7 @@ from ticktick_sdk.managers.batch import BatchManager
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def make_response(json_data=None, status_code: int = 200, text: str = ""):
     resp = MagicMock(spec=requests.Response)
     resp.status_code = status_code
@@ -48,8 +49,8 @@ def mock_client():
 # TaskManager
 # ---------------------------------------------------------------------------
 
-class TestTaskManager:
 
+class TestTaskManager:
     @pytest.fixture
     def manager(self, mock_client):
         return TaskManager(mock_client)
@@ -78,9 +79,13 @@ class TestTaskManager:
 
     def test_create_uses_inbox_when_no_project_id(self, manager, mock_client):
         mock_client.inbox_id = "inbox123"
-        mock_client.post.return_value = make_response({
-            "id": "x", "projectId": "inbox123", "title": "T",
-        })
+        mock_client.post.return_value = make_response(
+            {
+                "id": "x",
+                "projectId": "inbox123",
+                "title": "T",
+            }
+        )
 
         manager.create("T")
 
@@ -89,9 +94,13 @@ class TestTaskManager:
 
     def test_create_falls_back_to_inbox_literal_when_no_inbox_id(self, manager, mock_client):
         mock_client.inbox_id = ""
-        mock_client.post.return_value = make_response({
-            "id": "x", "projectId": "inbox", "title": "T",
-        })
+        mock_client.post.return_value = make_response(
+            {
+                "id": "x",
+                "projectId": "inbox",
+                "title": "T",
+            }
+        )
 
         manager.create("T")
 
@@ -100,9 +109,14 @@ class TestTaskManager:
 
     def test_create_includes_optional_fields(self, manager, mock_client):
         from datetime import datetime, timezone
-        mock_client.post.return_value = make_response({
-            "id": "x", "projectId": "p1", "title": "T",
-        })
+
+        mock_client.post.return_value = make_response(
+            {
+                "id": "x",
+                "projectId": "p1",
+                "title": "T",
+            }
+        )
 
         dt = datetime(2024, 3, 15, 9, 0, tzinfo=timezone.utc)
         manager.create(
@@ -135,9 +149,13 @@ class TestTaskManager:
         assert payload["kind"] == "NOTE"
 
     def test_create_with_items_builds_subtasks(self, manager, mock_client):
-        mock_client.post.return_value = make_response({
-            "id": "x", "projectId": "p1", "title": "T",
-        })
+        mock_client.post.return_value = make_response(
+            {
+                "id": "x",
+                "projectId": "p1",
+                "title": "T",
+            }
+        )
 
         manager.create("T", project_id="p1", items=[{"title": "Sub 1"}, {"title": "Sub 2"}])
 
@@ -258,8 +276,8 @@ class TestTaskManager:
 # TagManager
 # ---------------------------------------------------------------------------
 
-class TestTagManager:
 
+class TestTagManager:
     @pytest.fixture
     def manager(self, mock_client):
         return TagManager(mock_client)
@@ -355,8 +373,8 @@ class TestTagManager:
 # FilterManager
 # ---------------------------------------------------------------------------
 
-class TestFilterManager:
 
+class TestFilterManager:
     @pytest.fixture
     def manager(self, mock_client):
         return FilterManager(mock_client)
@@ -364,11 +382,11 @@ class TestFilterManager:
     # -- create() -----------------------------------------------------------
 
     def test_create_uses_batch_endpoint(self, manager, mock_client):
-        mock_client.post.return_value = make_response(
-            {"id2etag": {"filt1": "etag123"}, "id2error": {}}
-        )
+        mock_client.post.return_value = make_response({"id2etag": {"filt1": "etag123"}, "id2error": {}})
         mock_client.batch.full_sync.return_value = {
-            "filters": [{"id": "filt1", "name": "My Filter", "rule": "{}", "sortOrder": 0, "sortType": "", "viewMode": "list"}]
+            "filters": [
+                {"id": "filt1", "name": "My Filter", "rule": "{}", "sortOrder": 0, "sortType": "", "viewMode": "list"}
+            ]
         }
 
         manager.create("My Filter", rule={"type": 0, "and": []})
@@ -382,6 +400,7 @@ class TestFilterManager:
 
     def test_create_serialises_dict_rule_to_json(self, manager, mock_client):
         import json
+
         mock_client.post.return_value = make_response({"id2etag": {}, "id2error": {}})
 
         manager.create("F", rule={"type": 0})
@@ -400,9 +419,7 @@ class TestFilterManager:
         assert payload["add"][0]["rule"] == '{"type":0}'
 
     def test_create_returns_filter_from_sync_when_id2etag_has_entry(self, manager, mock_client):
-        mock_client.post.return_value = make_response(
-            {"id2etag": {"filt_abc": "etag1"}, "id2error": {}}
-        )
+        mock_client.post.return_value = make_response({"id2etag": {"filt_abc": "etag1"}, "id2error": {}})
         mock_client.batch.full_sync.return_value = {
             "filters": [
                 {"id": "filt_abc", "name": "Test", "rule": "{}", "sortOrder": 0, "sortType": "", "viewMode": "list"}
@@ -430,8 +447,8 @@ class TestFilterManager:
 # ProjectManager
 # ---------------------------------------------------------------------------
 
-class TestProjectManager:
 
+class TestProjectManager:
     @pytest.fixture
     def manager(self, mock_client):
         return ProjectManager(mock_client)
@@ -524,8 +541,8 @@ class TestProjectManager:
 # HabitManager
 # ---------------------------------------------------------------------------
 
-class TestHabitManager:
 
+class TestHabitManager:
     @pytest.fixture
     def manager(self, mock_client):
         return HabitManager(mock_client)
@@ -655,8 +672,8 @@ class TestHabitManager:
 # ColumnManager
 # ---------------------------------------------------------------------------
 
-class TestColumnManager:
 
+class TestColumnManager:
     @pytest.fixture
     def manager(self, mock_client):
         return ColumnManager(mock_client)
@@ -716,12 +733,16 @@ class TestColumnManager:
 
         def fake_get_project(endpoint):
             if col_id_holder:
-                return make_response([{
-                    "id": col_id_holder[0],
-                    "projectId": "proj1",
-                    "name": "Backlog",
-                    "sortOrder": 0,
-                }])
+                return make_response(
+                    [
+                        {
+                            "id": col_id_holder[0],
+                            "projectId": "proj1",
+                            "name": "Backlog",
+                            "sortOrder": 0,
+                        }
+                    ]
+                )
             return make_response([])
 
         mock_client.get.side_effect = fake_get_project
@@ -740,8 +761,8 @@ class TestColumnManager:
 # BatchManager
 # ---------------------------------------------------------------------------
 
-class TestBatchManager:
 
+class TestBatchManager:
     @pytest.fixture
     def manager(self, mock_client):
         return BatchManager(mock_client)
@@ -757,10 +778,12 @@ class TestBatchManager:
         assert manager.checkpoint == 99999
 
     def test_check_updates_inbox_id(self, manager, mock_client):
-        mock_client.get.return_value = make_response({
-            "checkPoint": 1,
-            "inboxId": "inbox_from_sync",
-        })
+        mock_client.get.return_value = make_response(
+            {
+                "checkPoint": 1,
+                "inboxId": "inbox_from_sync",
+            }
+        )
         manager.check(0)
         assert mock_client.inbox_id == "inbox_from_sync"
 

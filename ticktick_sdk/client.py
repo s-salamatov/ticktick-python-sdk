@@ -78,16 +78,18 @@ class TickTickClient:
         self.column = ColumnManager(self)
 
     def _setup_session(self) -> None:
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json",
-            "x-device": '{"platform":"web","os":"macOS 10.15.7","device":"Chrome 120.0.0.0",'
-                        '"name":"","version":6010,"id":"web_client","channel":"website","campaign":"","websocket":""}',
-            "Origin": "https://ticktick.com",
-            "Referer": "https://ticktick.com/",
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+                "x-device": '{"platform":"web","os":"macOS 10.15.7","device":"Chrome 120.0.0.0",'
+                '"name":"","version":6010,"id":"web_client","channel":"website","campaign":"","websocket":""}',
+                "Origin": "https://ticktick.com",
+                "Referer": "https://ticktick.com/",
+            }
+        )
 
     def set_token(self, token: str) -> None:
         """Set the authentication cookie directly (t=<token>)."""
@@ -156,8 +158,10 @@ class TickTickClient:
                 retry_after_raw = resp.headers.get("Retry-After")
                 retry_after = int(retry_after_raw) if retry_after_raw is not None else None
                 if attempt < MAX_RETRIES - 1:
-                    sleep_secs = retry_after if retry_after is not None else RETRY_BACKOFF * (2 ** attempt)
-                    logger.warning("Rate limited; retrying in %.1f s (attempt %d/%d)", sleep_secs, attempt + 1, MAX_RETRIES)
+                    sleep_secs = retry_after if retry_after is not None else RETRY_BACKOFF * (2**attempt)
+                    logger.warning(
+                        "Rate limited; retrying in %.1f s (attempt %d/%d)", sleep_secs, attempt + 1, MAX_RETRIES
+                    )
                     time.sleep(sleep_secs)
                     continue
                 raise TickTickRateLimitError(retry_after=retry_after)

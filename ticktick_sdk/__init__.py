@@ -22,8 +22,17 @@ from ticktick_sdk.exceptions import (
     TickTickRateLimitError,
 )
 from ticktick_sdk.models import (
-    Task, Project, Tag, Filter, Habit, HabitCheckin,
-    Subtask, Column, ProjectGroup, Reminder, SortOption,
+    Task,
+    Project,
+    Tag,
+    Filter,
+    Habit,
+    HabitCheckin,
+    Subtask,
+    Column,
+    ProjectGroup,
+    Reminder,
+    SortOption,
 )
 
 __all__ = [

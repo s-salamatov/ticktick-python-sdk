@@ -125,37 +125,47 @@ class FilterManager:
         conditions = []
 
         if project_ids:
-            conditions.append({
-                "conditionType": 1,
-                "or": [{"or": project_ids, "conditionName": "list"}],
-                "conditionName": "listOrGroup",
-            })
+            conditions.append(
+                {
+                    "conditionType": 1,
+                    "or": [{"or": project_ids, "conditionName": "list"}],
+                    "conditionName": "listOrGroup",
+                }
+            )
 
         if tag_names:
-            conditions.append({
-                "conditionType": 1,
-                "or": tag_names,
-                "conditionName": "tag",
-            })
+            conditions.append(
+                {
+                    "conditionType": 1,
+                    "or": tag_names,
+                    "conditionName": "tag",
+                }
+            )
 
         if priority is not None:
-            conditions.append({
-                "conditionType": 1,
-                "or": [str(p) for p in priority],
-                "conditionName": "priority",
-            })
+            conditions.append(
+                {
+                    "conditionType": 1,
+                    "or": [str(p) for p in priority],
+                    "conditionName": "priority",
+                }
+            )
 
         if status:
-            conditions.append({
-                "conditionType": 1,
-                "or": [status],
-                "conditionName": "status",
-            })
+            conditions.append(
+                {
+                    "conditionType": 1,
+                    "or": [status],
+                    "conditionName": "status",
+                }
+            )
 
-        conditions.append({
-            "conditionType": 1,
-            "or": [task_type],
-            "conditionName": "taskType",
-        })
+        conditions.append(
+            {
+                "conditionType": 1,
+                "or": [task_type],
+                "conditionName": "taskType",
+            }
+        )
 
         return {"type": 0, "and": conditions, "version": 3}
