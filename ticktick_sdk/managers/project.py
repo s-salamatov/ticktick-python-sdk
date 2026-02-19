@@ -37,7 +37,7 @@ class ProjectManager:
 
     def get_groups(self) -> list[ProjectGroup]:
         """Get all project groups (folders)."""
-        data = self._c.batch.check()
+        data = self._c.batch.check(0)
         return [ProjectGroup.from_dict(g) for g in data.get("projectGroups") or []]
 
     # ── Create ────────────────────────────────────────────────────────
